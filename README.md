@@ -135,6 +135,11 @@ py -3.12 -m rag.qdrant_search --query "What is TTFT?" --top-k 4 --normalize
 └─ README.md             # This document
 ```
 
+## Architecture
+High-level flow: chunk → embed → store in Qdrant → retrieve → route → generate.
+
+![Architecture diagram](Repo_Architecture.png)
+
 ## Modules overview
 - **rag/chunking.py**
   - Functions: `chunk_text`, `chunk_folder` (recursive over .md/.txt)
@@ -213,6 +218,8 @@ py -3.12 -m rag.qdrant_search --query "What is TTFT?" --top-k 4 --normalize
 - Deletion/updating flows are not provided yet (only upsert)
 - `qdrant_search.py` uses `client.search` (deprecated); can be switched to `query_points`
 
+- Routing currently uses fixed thresholds (hard-set rule). A dynamic/learned routing policy is under active development.
+
 
 ## Project overview (from Router_Workflow/LLM_Router.ipynb)
 This project implements and evaluates a GPU-aware LLM router that optimizes perceived latency (TTFT) and throughput by selecting between two inference backends after retrieving context via RAG.
@@ -247,6 +254,8 @@ This project implements and evaluates a GPU-aware LLM router that optimizes perc
   - If `prompt_tokens <= TOKENS_THRESHOLD` AND `free_vram_mb >= FREE_VRAM_THRESHOLD_MB` → route to **FAST**.
   - Else → route to **BASELINE**.
 
+Note: At present this is a hard-set rule. A dynamic/learned router (data-driven and adaptive to runtime conditions) is in progress.
+
 ### Inference backends
 - **BASELINE (local HF):**
   - `AutoModelForCausalLM` with `device_map="auto"` and `float16`.
@@ -271,6 +280,17 @@ This project implements and evaluates a GPU-aware LLM router that optimizes perc
   - `summarize_results()` to compute counts and averages per route.
   - `print_summary()` and `print_route_comparison()` for quick insight.
   - `plot_comparison(df)` for TTFT/latency/throughput charts.
+
+### Results (sample, from notebook runs)
+- Hardware and network will affect numbers; these are illustrative.
+- Baseline (HF local, TinyLlama 1.1B):
+  - Q: "What is TTFT?" → TTFT ≈ 0.64s, Total ≈ 1.92s, tok/s ≈ 21.9, prompt_tokens ≈ 636, gen_tokens ≈ 42
+  - Q: "Why does lower TTFT improve user experience?" → TTFT ≈ 0.13s, Total ≈ 0.62s, tok/s ≈ 35.7, prompt_tokens ≈ 640, gen_tokens ≈ 22
+  - Q: "When might a router prefer a baseline backend instead of a fast backend?" → TTFT ≈ 0.14s, Total ≈ 0.50s, tok/s ≈ 31.8, prompt_tokens ≈ 738, gen_tokens ≈ 16
+- FAST (HTTP endpoint example):
+  - Q: "What is TTFT?" → TTFT ≈ 0.29s, Total ≈ 1.38s, tok/s ≈ 30.5
+
+Note: These are single-run snapshots from the development notebook; use the provided benchmarking helpers to gather averages and medians for your environment.
 
 ### Environment configuration for notebook routing
 - Required (non-sensitive to print):
