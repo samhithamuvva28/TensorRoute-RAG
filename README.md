@@ -213,3 +213,72 @@ py -3.12 -m rag.qdrant_search --query "What is TTFT?" --top-k 4 --normalize
 - Deletion/updating flows are not provided yet (only upsert)
 - `qdrant_search.py` uses `client.search` (deprecated); can be switched to `query_points`
 
+
+## Project overview (from Router_Workflow/LLM_Router.ipynb)
+This project implements and evaluates a GPU-aware LLM router that optimizes perceived latency (TTFT) and throughput by selecting between two inference backends after retrieving context via RAG.
+
+- **Goal**
+  - Minimize Time To First Token (TTFT) while maintaining strong answer quality by routing requests based on prompt size and available GPU memory.
+
+- **Two halves of the system**
+  - **Retrieval (this repo’s Python modules):**
+    - Chunk Markdown/Text, embed locally with MiniLM-L6-v2 (384-dim), store in Qdrant.
+    - At query time, embed the question and fetch top-k chunks to build the context.
+  - **Generation + Routing (notebook workflow):**
+    - Build a prompt from retrieved context and question.
+    - Choose a backend (FAST vs BASELINE) using runtime signals.
+    - Generate an answer and measure TTFT/latency/throughput.
+
+- **Phases covered in the notebook**
+  1. Retrieval sanity check using Qdrant `query_points` (new API), ensuring collection size/distance and returning top-k chunks for sample queries like “What is TTFT?”.
+  2. Baseline text generation using a small, public Hugging Face model (`TinyLlama/TinyLlama-1.1B-Chat-v1.0`). TTFT is measured with `TextIteratorStreamer` as the time from request to first non-empty token.
+  3. Router signals and policy: estimate prompt tokens, read free VRAM, and route to FAST when the prompt is small enough and sufficient VRAM is available; otherwise, use BASELINE.
+  4. FAST path via a TensorRT HTTP endpoint (configured by `FAST_URL`) returning JSON with response text and optional TTFT/throughput fields.
+  5. Benchmarking utilities to run a set of questions, store metrics, summarize route counts and averages, and visualize comparisons.
+
+### Routing signals & policy (example from the notebook)
+- Signals:
+  - `estimated_prompt_tokens(prompt)` from the tokenizer
+  - `free_vram_mb()` via NVML (if CUDA available)
+- Example thresholds:
+  - `TOKENS_THRESHOLD = 700`
+  - `FREE_VRAM_THRESHOLD_MB = 16000`
+- Decision:
+  - If `prompt_tokens <= TOKENS_THRESHOLD` AND `free_vram_mb >= FREE_VRAM_THRESHOLD_MB` → route to **FAST**.
+  - Else → route to **BASELINE**.
+
+### Inference backends
+- **BASELINE (local HF):**
+  - `AutoModelForCausalLM` with `device_map="auto"` and `float16`.
+  - Deterministic decoding (temperature 0), caching enabled.
+  - TTFT measured using token streamer.
+- **FAST (TensorRT-HTTP):**
+  - External HTTP endpoint specified by `FAST_URL`.
+  - Returns JSON containing generated `text` and may include `ttft_s`, `gen_tokens`.
+  - Notebook includes a lightweight health check and formatted metrics printing.
+
+### Metrics captured (per query)
+- TTFT (s) — time to first non-empty token
+- Total latency (s)
+- Tokens/sec (generated tokens / total latency)
+- Prompt tokens (estimate)
+- Generated tokens (approx)
+- Free VRAM (MB) at routing time
+
+### Benchmarking & visualization
+- The notebook provides:
+  - `run_benchmark(questions)` to execute the full retrieve → route → generate loop.
+  - `summarize_results()` to compute counts and averages per route.
+  - `print_summary()` and `print_route_comparison()` for quick insight.
+  - `plot_comparison(df)` for TTFT/latency/throughput charts.
+
+### Environment configuration for notebook routing
+- Required (non-sensitive to print):
+  - `QDRANT_URL` (include `:6333` for Qdrant Cloud)
+  - `QDRANT_COLLECTION` (e.g., `gpu_llm_docs`)
+- Secrets (do not print):
+  - `QDRANT_API_KEY`
+  - `FAST_URL` (optional; enables FAST backend when set)
+
+Note: In the CLI modules, retrieval currently uses `client.search` for broad compatibility. The notebook demonstrates `client.query_points` (newer, preferred API). We can update the CLI to `query_points` on request.
+
