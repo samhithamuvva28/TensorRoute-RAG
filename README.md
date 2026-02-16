@@ -1,4 +1,4 @@
-# GPU aware LLM Router — Minimal RAG Pipeline
+# GPU aware LLM Router 
 
 A clean, local-first RAG pipeline for Markdown/Text documents using:
 - Sentence-Transformers for embeddings (default: `sentence-transformers/all-MiniLM-L6-v2`)
